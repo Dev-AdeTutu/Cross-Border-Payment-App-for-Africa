@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Send, Download, ExternalLink, Filter, Search, Flag, X, WifiOff, Loader2 } from 'lucide-react';
-import toast from 'react-hot-toast';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, Send, Download, ExternalLink, Filter, Search, Flag, X, WifiOff } from 'lucide-react';
 import api from '../utils/api';
 import { truncateAddress } from '../utils/currency';
 import { TransactionCardSkeleton } from '../components/Skeleton';
@@ -38,30 +37,64 @@ function buildHistoryParams(cursor, dateFrom, dateTo, asset) {
 
 export default function TransactionHistory() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { t } = useTranslation();
   const { isOnline } = useOnlineStatus();
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [filter, setFilter] = useState('all');
   const [nextCursor, setNextCursor] = useState(null);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState(null);
   const [fromCache, setFromCache] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [search, setSearch] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-  const [asset, setAsset] = useState('');
+
+  // Filter state derived from URL params
+  const filter = searchParams.get('direction') || 'all';
+  const dateFrom = searchParams.get('from') || '';
+  const dateTo = searchParams.get('to') || '';
+  const asset = searchParams.get('asset') || '';
+
+  function setFilter(value) {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (value === 'all') next.delete('direction'); else next.set('direction', value);
+      return next;
+    }, { replace: true });
+  }
+  function setDateFrom(value) {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (value) next.set('from', value); else next.delete('from');
+      return next;
+    }, { replace: true });
+  }
+  function setDateTo(value) {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (value) next.set('to', value); else next.delete('to');
+      return next;
+    }, { replace: true });
+  }
+  function setAsset(value) {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (value) next.set('asset', value); else next.delete('asset');
+      return next;
+    }, { replace: true });
+  }
   const [reportTx, setReportTx] = useState(null); // tx being reported
   const [reportType, setReportType] = useState('other');
   const [reportDesc, setReportDesc] = useState('');
   const [reportLoading, setReportLoading] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const fetchInitial = useCallback(async () => {
     setLoading(true);
     setError(null);
     setNextCursor(null);
+    setCurrentPage(1);
 
     // Offline — serve from IndexedDB cache
     if (!navigator.onLine) {
@@ -125,9 +158,22 @@ export default function TransactionHistory() {
     fetchInitial();
   }, [fetchInitial]);
 
+  // Sync current page number to URL query string for bookmarking
+  useEffect(() => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('page', String(currentPage));
+        return next;
+      },
+      { replace: true }
+    );
+  }, [currentPage, setSearchParams]);
+
   const loadMore = () => {
     if (!nextCursor) return;
     setLoadingMore(true);
+    const nextPage = currentPage + 1;
     const params = buildHistoryParams(nextCursor, dateFrom, dateTo, asset);
     api
       .get('/payments/history', { params })
@@ -135,6 +181,7 @@ export default function TransactionHistory() {
         setTransactions((prev) => [...prev, ...r.data.transactions]);
         setHasMore(r.data.has_more);
         setNextCursor(r.data.next_cursor || null);
+        setCurrentPage(nextPage);
       })
       .catch(() => {})
       .finally(() => setLoadingMore(false));
@@ -320,6 +367,22 @@ export default function TransactionHistory() {
           </button>
         ))}
       </div>
+
+      {/* Pagination info bar: page number and record count */}
+      {!loading && !error && transactions.length > 0 && (
+        <div
+          aria-live="polite"
+          className="flex items-center justify-between text-xs text-gray-500 mb-3 px-1"
+        >
+          <span>Page {currentPage}</span>
+          <span>
+            Showing {filtered.length} record{filtered.length !== 1 ? 's' : ''}
+            {hasMore && (
+              <span className="ml-1 text-gray-600">&middot; more available</span>
+            )}
+          </span>
+        </div>
+      )}
 
       {loading ? (
         <div className="space-y-3" aria-busy="true" aria-label="Loading transactions">

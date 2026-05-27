@@ -1,8 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Send, Download, RefreshCw, Copy, CheckCheck, FlaskConical, Plus, Minus, WifiOff, Wallet, ChevronDown } from 'lucide-react';
-import { Send, Download, RefreshCw, Copy, CheckCheck, FlaskConical, Plus, Minus, PiggyBank } from 'lucide-react';
-import { Send, Download, RefreshCw, Copy, CheckCheck, FlaskConical, Plus, Minus, WifiOff } from 'lucide-react';
+import { Send, Download, RefreshCw, Copy, CheckCheck, FlaskConical, Plus, Minus, WifiOff, Wallet, ChevronDown, PiggyBank, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { BalanceCardSkeleton, TransactionRowSkeleton } from '../components/Skeleton';
 import api from '../utils/api';
@@ -54,11 +52,15 @@ export default function Dashboard() {
 
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [selectedCurrency, setSelectedCurrency] = useState('XLM');
   const [funding, setFunding] = useState(false);
+  const [anchorLoading, setAnchorLoading] = useState(false);
+  const [anchorAction, setAnchorAction] = useState(null);
   const [balanceIncreased, setBalanceIncreased] = useState(false);
   const [fromCache, setFromCache] = useState(false);
+  const [showZeroBalances, setShowZeroBalances] = useState(false);
   const { currencies, convertFromXLM, usingApproximateRates } = useExchangeRates();
   const { isOnline } = useOnlineStatus();
 
@@ -83,7 +85,14 @@ export default function Dashboard() {
 
   const { isConnected, isReconnecting, error: streamError } = usePaymentStream(wallet?.public_key, handlePayment);
 
-  const loadDashboard = useCallback(async () => {
+  const loadDashboard = useCallback(async (isRefresh = false) => {
+    // Initial load shows full skeleton; manual refresh shows spinner on button only
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+
     if (!navigator.onLine) {
       try {
         const [cachedWallets, cachedHistory] = await Promise.all([
@@ -102,6 +111,7 @@ export default function Dashboard() {
         // IndexedDB unavailable
       } finally {
         setLoading(false);
+        setRefreshing(false);
       }
       return;
     }
@@ -143,6 +153,7 @@ export default function Dashboard() {
       }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
@@ -171,13 +182,20 @@ export default function Dashboard() {
   };
 
   const handleAnchorAction = async (action) => {
+    setAnchorLoading(true);
+    setAnchorAction(action);
+    const win = window.open('', 'anchor', 'width=500,height=600');
     try {
       const asset = 'USDC';
       const endpoint = action === 'deposit' ? '/anchor/deposit' : '/anchor/withdraw';
       const res = await api.post(endpoint, { asset });
-      window.open(res.data.url, 'anchor', 'width=500,height=600');
+      win.location.href = res.data.url;
     } catch (err) {
+      win.close();
       toast.error(err.response?.data?.error || `Failed to ${action}`);
+    } finally {
+      setAnchorLoading(false);
+      setAnchorAction(null);
     }
   };
 
@@ -203,8 +221,20 @@ export default function Dashboard() {
   const xlmBalance = wallet?.balances?.find((b) => b.asset === 'XLM')?.balance || '0';
   const xlmAvailable = wallet?.balances?.find((b) => b.asset === 'XLM')?.available_balance || null;
   const accountExists = wallet?.account_exists !== false; // treat undefined (cached) as true
+
+  // All non-zero balances for the active wallet
+  const allBalances = wallet?.balances || [];
+  const visibleBalances = showZeroBalances
+    ? allBalances
+    : allBalances.filter((b) => parseFloat(b.balance) > 0);
+
+  // The selected asset's balance (for currency conversion display)
+  const selectedAssetBalance =
+    allBalances.find((b) => b.asset === selectedCurrency)?.balance || '0';
   const displayBalance =
-    selectedCurrency === 'XLM' ? xlmBalance : convertFromXLM(xlmBalance, selectedCurrency);
+    selectedCurrency === 'XLM'
+      ? selectedAssetBalance
+      : convertFromXLM(xlmBalance, selectedCurrency);
 
   if (loading)
     return (
@@ -270,6 +300,23 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Stream disconnected banner — shows when not connected and not actively reconnecting */}
+      {!isConnected && !isReconnecting && streamError && (
+        <div
+          role="alert"
+          aria-live="polite"
+          className="flex items-center justify-between bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-red-400 text-sm"
+        >
+          <span>Live updates paused — pull to refresh</span>
+          <button
+            onClick={() => loadDashboard()}
+            className="text-xs bg-red-500/20 hover:bg-red-500/30 px-3 py-1 rounded-lg transition-colors"
+          >
+            Refresh
+          </button>
+        </div>
+      )}
+
       {/* Greeting */}
       <div className="flex items-center justify-between">
         <div>
@@ -278,13 +325,39 @@ export default function Dashboard() {
             {user?.full_name?.split(' ')[0]} 👋
           </h2>
         </div>
-        <button
-          onClick={() => loadDashboard()}
-          className="text-gray-400 hover:text-white"
-          aria-label="Refresh dashboard"
-        >
-          <RefreshCw size={18} />
-        </button>
+        <div className="flex items-center gap-3">
+          {/* Stream connection status indicator */}
+          <span
+            aria-label={
+              isReconnecting
+                ? 'Live updates: reconnecting'
+                : isConnected
+                ? 'Live updates: connected'
+                : 'Live updates: disconnected'
+            }
+            title={
+              isReconnecting
+                ? 'Reconnecting to live updates…'
+                : isConnected
+                ? 'Live updates active'
+                : 'Live updates paused'
+            }
+            className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+              isReconnecting
+                ? 'bg-orange-400 animate-pulse'
+                : isConnected
+                ? 'bg-green-400'
+                : 'bg-red-400'
+            }`}
+          />
+          <button
+            onClick={() => loadDashboard()}
+            className="text-gray-400 hover:text-white"
+            aria-label="Refresh dashboard"
+          >
+            <RefreshCw size={18} />
+          </button>
+        </div>
       </div>
 
       {/* Wallet Selector */}
@@ -408,21 +481,60 @@ export default function Dashboard() {
             </span>
           )}
         </div>
-        <div className="flex items-end gap-2 mb-4">
+
+        {/* Primary display: selected asset balance */}
+        <div className="flex items-end gap-2 mb-2">
           <span className="text-4xl font-bold text-white">
             {parseFloat(displayBalance).toLocaleString()}
           </span>
           <span className="text-primary-200 mb-1">{selectedCurrency}</span>
         </div>
         {xlmAvailable !== null && selectedCurrency === 'XLM' && (
-          <p className="text-primary-200 text-xs mb-3">
+          <p className="text-primary-200 text-xs mb-2">
             Available to send: {parseFloat(xlmAvailable).toLocaleString()} XLM
           </p>
         )}
 
-        {/* Currency selector */}
-        <div className="flex gap-2 flex-wrap mb-4">
-          {currencies.map((c) => (
+        {/* All asset balances */}
+        {visibleBalances.length > 0 && (
+          <div className="mb-3 space-y-1">
+            {visibleBalances.map((b) => {
+              const assetMeta = currencies.find((c) => c.code === b.asset);
+              const flag = assetMeta?.flag ?? '🪙';
+              const isSelected = b.asset === selectedCurrency;
+              return (
+                <button
+                  key={b.asset}
+                  onClick={() => setSelectedCurrency(b.asset)}
+                  className={`w-full flex items-center justify-between rounded-lg px-3 py-1.5 transition-colors text-sm ${
+                    isSelected
+                      ? 'bg-white/20 text-white font-semibold'
+                      : 'bg-primary-800/30 text-primary-100 hover:bg-primary-800/50'
+                  }`}
+                  aria-pressed={isSelected}
+                >
+                  <span>{flag} {b.asset}</span>
+                  <span>{parseFloat(b.balance).toLocaleString()}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Show all / hide zero-balance toggle */}
+        {allBalances.some((b) => parseFloat(b.balance) === 0) && (
+          <button
+            onClick={() => setShowZeroBalances((v) => !v)}
+            className="flex items-center gap-1 text-primary-200 text-xs mb-3 hover:text-white transition-colors"
+          >
+            {showZeroBalances ? <EyeOff size={12} /> : <Eye size={12} />}
+            {showZeroBalances ? 'Hide zero balances' : 'Show all assets'}
+          </button>
+        )}
+
+        {/* Fiat currency selector */}
+        <div className="flex gap-2 flex-wrap mb-3">
+          {currencies.filter((c) => c.code !== 'XLM').map((c) => (
             <button
               key={c.code}
               onClick={() => setSelectedCurrency(c.code)}
@@ -513,10 +625,13 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 gap-3">
         <button
           onClick={() => handleAnchorAction('deposit')}
-          className="bg-green-500/10 hover:bg-green-500/20 border border-green-500/30 rounded-xl p-4 flex items-center gap-3 shadow-sm transition-all"
+          disabled={anchorLoading}
+          className="bg-green-500/10 hover:bg-green-500/20 disabled:opacity-50 border border-green-500/30 rounded-xl p-4 flex items-center gap-3 shadow-sm transition-all"
         >
           <div className="w-10 h-10 bg-green-500/20 rounded-lg flex items-center justify-center text-green-500">
-            <Plus size={20} />
+            {anchorLoading && anchorAction === 'deposit'
+              ? <div className="w-5 h-5 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
+              : <Plus size={20} />}
           </div>
           <span className="font-semibold text-green-600 dark:text-green-400">
             {t('dashboard.add_money') || 'Add Money'}
@@ -524,10 +639,13 @@ export default function Dashboard() {
         </button>
         <button
           onClick={() => handleAnchorAction('withdraw')}
-          className="bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 rounded-xl p-4 flex items-center gap-3 shadow-sm transition-all"
+          disabled={anchorLoading}
+          className="bg-blue-500/10 hover:bg-blue-500/20 disabled:opacity-50 border border-blue-500/30 rounded-xl p-4 flex items-center gap-3 shadow-sm transition-all"
         >
           <div className="w-10 h-10 bg-blue-500/20 rounded-lg flex items-center justify-center text-blue-500">
-            <Minus size={20} />
+            {anchorLoading && anchorAction === 'withdraw'
+              ? <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              : <Minus size={20} />}
           </div>
           <span className="font-semibold text-blue-600 dark:text-blue-400">
             {t('dashboard.withdraw') || 'Withdraw'}

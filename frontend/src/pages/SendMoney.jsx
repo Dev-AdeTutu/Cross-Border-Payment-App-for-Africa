@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Send, ChevronDown, Users, Camera, ArrowRightLeft, Wallet, Code } from 'lucide-react';
+import { ArrowLeft, Send, ChevronDown, Users, Camera, Code, ArrowRightLeft, Wallet, AlertTriangle } from 'lucide-react';
 import api from '../utils/api';
 import { useExchangeRates } from '../hooks/useExchangeRates';
 import toast from 'react-hot-toast';
@@ -13,6 +13,11 @@ import LedgerSignModal from '../components/LedgerSignModal';
 const SLIPPAGE_OPTIONS = [0.5, 1, 2];
 const DEFAULT_SLIPPAGE = 1;
 
+const getSavedSlippage = () => {
+  const v = parseFloat(localStorage.getItem('afripay_slippage'));
+  return SLIPPAGE_OPTIONS.includes(v) ? v : DEFAULT_SLIPPAGE;
+};
+
 export default function SendMoney() {
   const navigate = useNavigate();
   const { t } = useTranslation();
@@ -24,7 +29,7 @@ export default function SendMoney() {
     asset: searchParams.get('asset') || 'XLM',
     memo: searchParams.get('memo') || '',
     destination_asset: '',
-    slippage: DEFAULT_SLIPPAGE,
+    slippage: getSavedSlippage(),
     memo_type: 'text',
     fee_priority: 'standard',
   });
@@ -67,8 +72,13 @@ export default function SendMoney() {
   const [pathResult, setPathResult] = useState(null);
   const [pathLoading, setPathLoading] = useState(false);
   const [memoRequired, setMemoRequired] = useState(false);
+  const [memoError, setMemoError] = useState(false);
+  const memoRef = useRef(null);
   // 'send' = strict send (sender specifies exact amount), 'receive' = strict receive (recipient gets exact amount)
   const [sendMode, setSendMode] = useState('send');
+
+  // Trustline check state
+  const [trustlineWarning, setTrustlineWarning] = useState(null); // null | string (asset code)
 
   // Ledger hardware wallet state
   const [showLedgerModal, setShowLedgerModal] = useState(false);
@@ -76,6 +86,37 @@ export default function SendMoney() {
   const [ledgerNetworkPassphrase, setLedgerNetworkPassphrase] = useState(null);
 
   const isCrossAsset = form.destination_asset && form.destination_asset !== form.asset;
+
+  // Initial/clean state used for reset and dirty-check
+  const cleanForm = {
+    recipient_address: searchParams.get('to') || '',
+    amount: searchParams.get('amount') || '',
+    asset: searchParams.get('asset') || 'XLM',
+    memo: searchParams.get('memo') || '',
+    destination_asset: '',
+    slippage: getSavedSlippage(),
+    memo_type: 'text',
+    fee_priority: 'standard',
+    private_note: '',
+  };
+
+  /** Clears all user-entered fields back to their URL-seeded defaults. */
+  const resetForm = () => {
+    setForm(cleanForm);
+    setConfirmed(false);
+    setFeeXLM(null);
+    setPathResult(null);
+    setMemoRequired(false);
+    setMemoError(false);
+    setContractSimData(null);
+  };
+
+  /** True when the user has entered data beyond the URL-seeded defaults. */
+  const formIsDirty =
+    form.recipient_address !== cleanForm.recipient_address ||
+    form.amount !== cleanForm.amount ||
+    form.memo !== cleanForm.memo ||
+    (form.private_note || '') !== '';
 
   // Multi-wallet state
   const [wallets, setWallets] = useState([]);
@@ -98,6 +139,16 @@ export default function SendMoney() {
   useEffect(() => {
     api.get('/payments/fee-stats').then((r) => setFeeStats(r.data)).catch(() => { });
   }, []);
+
+  // Warn the user before closing/refreshing the tab when the form has data
+  useBeforeUnload(
+    React.useCallback(
+      (e) => {
+        if (formIsDirty) e.preventDefault();
+      },
+      [formIsDirty]
+    )
+  );
 
   useEffect(() => {
     api.get('/wallet/list').then((r) => {
@@ -245,6 +296,36 @@ export default function SendMoney() {
     }
   }, []);
 
+  // Debounced trustline check: warn when recipient may not hold the selected non-XLM asset
+  useEffect(() => {
+    const address = form.recipient_address;
+    const asset = form.asset;
+
+    // Only check for non-XLM assets with a plausible Stellar address
+    if (asset === 'XLM' || !address || address.length < 56 || !address.startsWith('G')) {
+      setTrustlineWarning(null);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await api.get('/wallet/check-trustline', {
+          params: { address, asset },
+        });
+        if (res.data.has_trustline === false) {
+          setTrustlineWarning(asset);
+        } else {
+          setTrustlineWarning(null);
+        }
+      } catch {
+        // Silently ignore — don't block the user on a failed check
+        setTrustlineWarning(null);
+      }
+    }, 600);
+
+    return () => clearTimeout(timer);
+  }, [form.recipient_address, form.asset]);
+
   const estimatedValue = form.amount && form.asset === 'XLM'
     ? `≈ ${convertFromXLM(form.amount, 'USD')} USD`
     : '';
@@ -337,6 +418,7 @@ export default function SendMoney() {
         wallet_id: selectedWallet?.id || undefined,
       });
       toast.success('Payment sent via Ledger!');
+      resetForm();
       navigate('/dashboard');
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to submit Ledger transaction');
@@ -381,6 +463,7 @@ export default function SendMoney() {
             txHash: res.data.transaction.tx_hash
           }).catch(() => { });
         }
+        resetForm();
         navigate('/dashboard');
       } else {
         const m = form.memo.trim();
@@ -409,6 +492,7 @@ export default function SendMoney() {
       // Offline queue — the api interceptor returns { queued: true }
       if (res.data?.queued) {
         toast.success('You\'re offline. Payment queued — it will send automatically when you reconnect.', { duration: 5000 });
+        resetForm();
         navigate('/dashboard');
         return;
       }
@@ -421,11 +505,22 @@ export default function SendMoney() {
       }
 
       toast.success(t('send.success'));
+      resetForm();
       navigate('/dashboard');
     } catch (err) {
-      toast.error(err.response?.data?.error || t('send.error'));
-      setConfirmed(false);
-      setShowPINVerification(false);
+      if (err.response?.data?.code === 'MEMO_REQUIRED') {
+        setMemoError(true);
+        setConfirmed(false);
+        setShowPINVerification(false);
+        setTimeout(() => {
+          memoRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          memoRef.current?.focus();
+        }, 50);
+      } else {
+        toast.error(err.response?.data?.error || t('send.error'));
+        setConfirmed(false);
+        setShowPINVerification(false);
+      }
     } finally {
       setLoading(false);
     }
@@ -433,7 +528,13 @@ export default function SendMoney() {
 
   return (
     <div className="px-4 py-6 max-w-lg mx-auto pb-safe" style={{ paddingBottom: keyboardOpen ? 'max(1.5rem, env(safe-area-inset-bottom))' : '1.5rem' }}>
-      <button onClick={() => navigate(-1)} className="text-gray-400 hover:text-white mb-6 flex items-center gap-1">
+      <button
+        onClick={() => {
+          if (formIsDirty && !window.confirm('You have unsaved changes. Leave this page?')) return;
+          navigate(-1);
+        }}
+        className="text-gray-400 hover:text-white mb-6 flex items-center gap-1"
+      >
         <ArrowLeft size={18} /> {t('common.back')}
       </button>
 
@@ -594,6 +695,19 @@ export default function SendMoney() {
           </div>
         )}
 
+        {/* Trustline warning — advisory only, does not block submission */}
+        {trustlineWarning && (
+          <div
+            role="alert"
+            className="flex items-start gap-2 bg-amber-500/10 border border-amber-500/40 rounded-xl px-4 py-3 text-amber-400 text-sm"
+          >
+            <AlertTriangle size={16} className="shrink-0 mt-0.5" aria-hidden="true" />
+            <span>
+              ⚠️ Recipient may not be able to receive {trustlineWarning}. Verify their wallet supports this asset.
+            </span>
+          </div>
+        )}
+
         {/* Amount + Source Asset */}
         <div>
           <label className="text-sm text-gray-400 mb-1 block">
@@ -699,13 +813,32 @@ export default function SendMoney() {
                   <p className="text-green-400">
                     Recipient receives ≈ <span className="font-semibold">{pathResult.destinationAmount} {form.destination_asset}</span>
                   </p>
+                  {(() => {
+                    const srcAmt = parseFloat(form.amount);
+                    const dstAmt = parseFloat(pathResult.destinationAmount);
+                    if (!srcAmt || !dstAmt) return null;
+                    const rate = (dstAmt / srcAmt).toPrecision(6);
+                    const impact = form.slippage;
+                    return (
+                      <>
+                        <p className="text-xs text-gray-400">
+                          Rate: 1 {form.asset} ≈ {rate} {form.destination_asset}
+                        </p>
+                        {impact > 1 && (
+                          <p className="text-xs text-yellow-400">
+                            ⚠️ High price impact ({impact}%). Consider splitting into smaller transactions.
+                          </p>
+                        )}
+                      </>
+                    );
+                  })()}
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs text-gray-500">Slippage tolerance:</span>
                     {SLIPPAGE_OPTIONS.map(s => (
                       <button
                         key={s}
                         type="button"
-                        onClick={() => setForm({ ...form, slippage: s })}
+                        onClick={() => { localStorage.setItem('afripay_slippage', s); setForm({ ...form, slippage: s }); }}
                         className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${form.slippage === s
                           ? 'border-primary-500 text-primary-400'
                           : 'border-gray-600 text-gray-400 hover:border-gray-400'
@@ -726,13 +859,32 @@ export default function SendMoney() {
                   <p className="text-yellow-300 text-xs">
                     You pay approximately <span className="font-semibold">{pathResult.sourceAmount} {form.asset}</span>
                   </p>
+                  {(() => {
+                    const srcAmt = parseFloat(pathResult.sourceAmount);
+                    const dstAmt = parseFloat(form.amount);
+                    if (!srcAmt || !dstAmt) return null;
+                    const rate = (dstAmt / srcAmt).toPrecision(6);
+                    const impact = form.slippage;
+                    return (
+                      <>
+                        <p className="text-xs text-gray-400">
+                          Rate: 1 {form.asset} ≈ {rate} {form.destination_asset}
+                        </p>
+                        {impact > 1 && (
+                          <p className="text-xs text-yellow-400">
+                            ⚠️ High price impact ({impact}%). Consider splitting into smaller transactions.
+                          </p>
+                        )}
+                      </>
+                    );
+                  })()}
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs text-gray-500">Max slippage:</span>
                     {SLIPPAGE_OPTIONS.map(s => (
                       <button
                         key={s}
                         type="button"
-                        onClick={() => setForm({ ...form, slippage: s })}
+                        onClick={() => { localStorage.setItem('afripay_slippage', s); setForm({ ...form, slippage: s }); }}
                         className={`text-xs px-2 py-0.5 rounded-full border transition-colors ${form.slippage === s
                           ? 'border-primary-500 text-primary-400'
                           : 'border-gray-600 text-gray-400 hover:border-gray-400'
@@ -788,13 +940,19 @@ export default function SendMoney() {
         <div>
           <label className="text-sm text-gray-400 mb-1 block">{t('send.memo')}</label>
           <input
+            ref={memoRef}
             type="text"
             maxLength={memoMaxLen}
             placeholder={t('send.memo_placeholder')}
             value={form.memo}
-            onChange={e => setForm({ ...form, memo: e.target.value })}
-            className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-primary-500 transition-colors font-mono text-sm"
+            onChange={e => { setForm({ ...form, memo: e.target.value }); setMemoError(false); }}
+            className={`w-full bg-gray-800 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none transition-colors font-mono text-sm border ${
+              memoError ? 'border-red-500 focus:border-red-400' : 'border-gray-700 focus:border-primary-500'
+            }`}
           />
+          {memoError && (
+            <p className="mt-1 text-xs text-red-400">A memo is required for this recipient. Please add one before sending.</p>
+          )}
           {memoTrimmed ? (
             <div className="mt-2">
               <label className="text-sm text-gray-400 mb-1 block" htmlFor="memo-type">

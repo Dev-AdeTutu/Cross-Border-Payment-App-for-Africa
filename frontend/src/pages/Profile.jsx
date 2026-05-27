@@ -35,6 +35,7 @@ export default function Profile() {
   const [trustlines, setTrustlines] = useState([]);
   const [newAsset, setNewAsset] = useState('');
   const [trustlineLoading, setTrustlineLoading] = useState(false);
+  const [deleteContactPending, setDeleteContactPending] = useState(null); // { id, name }
   const [showCloseAccount, setShowCloseAccount] = useState(false);
   const [closeDestination, setCloseDestination] = useState('');
   const [closePassword, setClosePassword] = useState('');
@@ -42,6 +43,26 @@ export default function Profile() {
 
   // Horizon history import state (issue #130)
   const [importingHistory, setImportingHistory] = useState(false);
+
+  // Change email state (issue #301)
+  const [showChangeEmail, setShowChangeEmail] = useState(false);
+  const [changeEmailForm, setChangeEmailForm] = useState({ new_email: '', password: '' });
+  const [changeEmailLoading, setChangeEmailLoading] = useState(false);
+
+  const handleChangeEmail = async (e) => {
+    e.preventDefault();
+    setChangeEmailLoading(true);
+    try {
+      await api.post('/auth/change-email', changeEmailForm);
+      toast.success('Verification email sent. Check your inbox to confirm the change.');
+      setShowChangeEmail(false);
+      setChangeEmailForm({ new_email: '', password: '' });
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to request email change');
+    } finally {
+      setChangeEmailLoading(false);
+    }
+  };
 
   const handleImportHistory = async () => {
     setImportingHistory(true);
@@ -247,8 +268,9 @@ export default function Profile() {
     }
   };
 
-  const deleteContact = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this contact?')) return;
+  const deleteContact = async () => {
+    const { id } = deleteContactPending;
+    setDeleteContactPending(null);
     try {
       await api.delete(`/wallet/contacts/${id}`);
       setContacts(contacts.filter(c => c.id !== id));
@@ -338,6 +360,50 @@ export default function Profile() {
             </button>
           </div>
         </div>
+      </div>
+
+      {/* Change Email */}
+      <div className="bg-gray-900 rounded-2xl p-5">
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-2">
+            <Mail size={16} className="text-gray-500" />
+            <h3 className="font-semibold text-white">Change Email</h3>
+          </div>
+          <button
+            onClick={() => { setShowChangeEmail(v => !v); setChangeEmailForm({ new_email: '', password: '' }); }}
+            className="text-sm text-primary-500 hover:text-primary-400"
+          >
+            {showChangeEmail ? 'Cancel' : 'Change'}
+          </button>
+        </div>
+        <p className="text-xs text-gray-500 mb-3">Current: {user?.email}</p>
+        {showChangeEmail && (
+          <form onSubmit={handleChangeEmail} className="space-y-3">
+            <input
+              type="email"
+              required
+              placeholder="New email address"
+              value={changeEmailForm.new_email}
+              onChange={e => setChangeEmailForm({ ...changeEmailForm, new_email: e.target.value })}
+              className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-primary-500"
+            />
+            <input
+              type="password"
+              required
+              placeholder="Current password to confirm"
+              value={changeEmailForm.password}
+              onChange={e => setChangeEmailForm({ ...changeEmailForm, password: e.target.value })}
+              className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-primary-500"
+            />
+            <button
+              type="submit"
+              disabled={changeEmailLoading}
+              className="w-full bg-primary-500 hover:bg-primary-600 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors"
+            >
+              {changeEmailLoading ? 'Sending…' : 'Send Verification Email'}
+            </button>
+          </form>
+        )}
       </div>
 
       {/* Language selector */}
@@ -489,7 +555,7 @@ export default function Profile() {
                   )}
                 </div>
                 <button
-                  onClick={() => deleteContact(c.id)}
+                  onClick={() => setDeleteContactPending({ id: c.id, name: c.name })}
                   className="p-1.5 text-gray-500 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
                   aria-label="Delete contact"
                 >
@@ -967,6 +1033,31 @@ export default function Profile() {
       >
         <LogOut size={18} /> {t('common.sign_out')}
       </button>
+      {/* Delete contact confirmation dialog */}
+      {deleteContactPending && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="bg-gray-900 rounded-2xl p-6 w-full max-w-sm space-y-4">
+            <p className="text-white font-semibold text-base">
+              Delete {deleteContactPending.name}?
+            </p>
+            <p className="text-gray-400 text-sm">This cannot be undone.</p>
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={() => setDeleteContactPending(null)}
+                className="flex-1 bg-gray-800 hover:bg-gray-700 text-white text-sm font-medium py-2.5 rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={deleteContact}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold py-2.5 rounded-xl transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
