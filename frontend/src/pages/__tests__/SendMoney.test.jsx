@@ -439,3 +439,71 @@ test('Verify address link points to mainnet Stellar Expert URL when network is m
   // Reset
   delete process.env.REACT_APP_STELLAR_NETWORK;
 });
+
+// ── Recipient address validation ───────────────────────────────────────────
+
+const VALID_KEY   = 'GBOB0000000000000000000000000000000000000000000000000001'; // 56 chars, starts G
+const INVALID_KEY = 'GBOB000'; // too short
+const FED_ADDRESS = 'alice*stellar.org';
+
+test('shows green checkmark for a valid Stellar public key', async () => {
+  renderComponent();
+  const input = screen.getByPlaceholderText('G... Stellar address');
+  await userEvent.type(input, VALID_KEY);
+  fireEvent.blur(input);
+  expect(await screen.findByText(/valid address/i)).toBeInTheDocument();
+});
+
+test('shows green checkmark for a valid federation address', async () => {
+  renderComponent();
+  const input = screen.getByPlaceholderText('G... Stellar address');
+  await userEvent.type(input, FED_ADDRESS);
+  fireEvent.blur(input);
+  expect(await screen.findByText(/valid address/i)).toBeInTheDocument();
+});
+
+test('shows inline error on blur for an invalid address', async () => {
+  renderComponent();
+  const input = screen.getByPlaceholderText('G... Stellar address');
+  await userEvent.type(input, INVALID_KEY);
+  fireEvent.blur(input);
+  expect(await screen.findByText(/invalid address/i)).toBeInTheDocument();
+});
+
+test('clears error when user edits the field after an invalid entry', async () => {
+  renderComponent();
+  const input = screen.getByPlaceholderText('G... Stellar address');
+  await userEvent.type(input, INVALID_KEY);
+  fireEvent.blur(input);
+  await screen.findByText(/invalid address/i);
+
+  await userEvent.clear(input);
+  await userEvent.type(input, 'G');
+  expect(screen.queryByText(/invalid address/i)).not.toBeInTheDocument();
+});
+
+test('submit button is disabled while address is invalid', async () => {
+  renderComponent();
+  const input = screen.getByPlaceholderText('G... Stellar address');
+  await userEvent.type(input, INVALID_KEY);
+  fireEvent.blur(input);
+  await screen.findByText(/invalid address/i);
+  expect(screen.getByRole('button', { name: /review payment/i })).toBeDisabled();
+});
+
+test('submit button is enabled for a valid address', async () => {
+  renderComponent();
+  const input = screen.getByPlaceholderText('G... Stellar address');
+  await userEvent.type(input, VALID_KEY);
+  fireEvent.blur(input);
+  await screen.findByText(/valid address/i);
+  expect(screen.getByRole('button', { name: /review payment/i })).not.toBeDisabled();
+});
+
+test('no error shown when field is empty on blur', async () => {
+  renderComponent();
+  const input = screen.getByPlaceholderText('G... Stellar address');
+  fireEvent.focus(input);
+  fireEvent.blur(input);
+  expect(screen.queryByText(/invalid address/i)).not.toBeInTheDocument();
+});

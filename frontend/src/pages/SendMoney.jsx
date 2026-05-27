@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams, useBeforeUnload } from 'react-router-dom';
-import { ArrowLeft, Send, ChevronDown, Users, Camera, Code, ArrowRightLeft, Wallet, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Send, ChevronDown, Users, Camera, Code, ArrowRightLeft, Wallet, AlertTriangle, CheckCircle } from 'lucide-react';
 import api from '../utils/api';
 import { useExchangeRates } from '../hooks/useExchangeRates';
 import toast from 'react-hot-toast';
@@ -57,6 +57,7 @@ export default function SendMoney() {
   const [memoRequired, setMemoRequired] = useState(false);
   const [memoError, setMemoError] = useState(false);
   const memoRef = useRef(null);
+  const [addressError, setAddressError] = useState(false);
   // 'send' = strict send (sender specifies exact amount), 'receive' = strict receive (recipient gets exact amount)
   const [sendMode, setSendMode] = useState('send');
 
@@ -69,6 +70,10 @@ export default function SendMoney() {
   const [ledgerNetworkPassphrase, setLedgerNetworkPassphrase] = useState(null);
 
   const isCrossAsset = form.destination_asset && form.destination_asset !== form.asset;
+
+  /** Returns true for a valid Ed25519 public key or a federation address */
+  const isValidStellarAddress = (addr) =>
+    (addr.startsWith('G') && addr.length === 56) || addr.includes('*');
 
   // Initial/clean state used for reset and dirty-check
   const cleanForm = {
@@ -91,6 +96,7 @@ export default function SendMoney() {
     setPathResult(null);
     setMemoRequired(false);
     setMemoError(false);
+    setAddressError(false);
     setContractSimData(null);
   };
 
@@ -614,10 +620,32 @@ export default function SendMoney() {
             required
             placeholder={t('send.recipient_placeholder') || 'Wallet address or username*domain'}
             value={form.recipient_address}
-            onChange={e => { setForm({ ...form, recipient_address: e.target.value }); setMemoRequired(false); }}
-            onBlur={e => checkMemoRequired(e.target.value)}
-            className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-primary-500 transition-colors font-mono text-sm"
+            onChange={e => {
+              setForm({ ...form, recipient_address: e.target.value });
+              setMemoRequired(false);
+              setAddressError(false);
+            }}
+            onBlur={e => {
+              const val = e.target.value.trim();
+              if (val && !isValidStellarAddress(val)) setAddressError(true);
+              checkMemoRequired(val);
+            }}
+            aria-invalid={addressError}
+            aria-describedby={addressError ? 'address-error' : undefined}
+            className={`w-full bg-gray-800 border rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none transition-colors font-mono text-sm ${
+              addressError ? 'border-red-500 focus:border-red-400' : 'border-gray-700 focus:border-primary-500'
+            }`}
           />
+          {addressError && (
+            <p id="address-error" className="mt-1 text-xs text-red-400">
+              Invalid address. Enter a Stellar public key (G…, 56 chars) or federation address (name*domain).
+            </p>
+          )}
+          {!addressError && form.recipient_address && isValidStellarAddress(form.recipient_address) && (
+            <p className="mt-1 flex items-center gap-1 text-xs text-green-400">
+              <CheckCircle size={12} aria-hidden="true" /> Valid address
+            </p>
+          )}
           {showContacts && contacts.length > 0 && (
             <div
               className="mt-1 bg-gray-800 border border-gray-700 rounded-xl overflow-hidden"
@@ -1053,7 +1081,7 @@ export default function SendMoney() {
         <button
           ref={submitButtonRef}
           type="submit"
-          disabled={loading || (isCrossAsset && !pathResult) || (memoRequired && !form.memo.trim())}
+          disabled={loading || (isCrossAsset && !pathResult) || (memoRequired && !form.memo.trim()) || addressError || (!!form.recipient_address && !isValidStellarAddress(form.recipient_address))}
           className={`w-full font-semibold py-3.5 rounded-xl flex items-center justify-center gap-2 transition-colors ${confirmed
             ? 'bg-yellow-500 hover:bg-yellow-600 text-black'
             : 'bg-primary-500 hover:bg-primary-600 text-white'
