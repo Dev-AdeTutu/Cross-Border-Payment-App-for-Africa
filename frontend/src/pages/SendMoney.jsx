@@ -51,6 +51,23 @@ export default function SendMoney() {
   const [contractSimLoading, setContractSimLoading] = useState(false);
   const [requestId] = useState(searchParams.get('request'));
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+
+  // Pre-fill form from payment request when only requestId is in the URL
+  useEffect(() => {
+    if (!requestId || form.recipient_address || form.amount) return;
+    api.get(`/payment-requests/${requestId}`)
+      .then(r => {
+        const { requester_wallet, amount, asset, memo } = r.data;
+        setForm(f => ({
+          ...f,
+          recipient_address: requester_wallet || f.recipient_address,
+          amount: amount ? String(amount) : f.amount,
+          asset: asset || f.asset,
+          memo: memo || f.memo,
+        }));
+      })
+      .catch(() => { });
+  }, [requestId]); // eslint-disable-line react-hooks/exhaustive-deps
   const { currencies, convertFromXLM, usingApproximateRates } = useExchangeRates();
   const [pathResult, setPathResult] = useState(null);
   const [pathLoading, setPathLoading] = useState(false);
@@ -929,7 +946,7 @@ export default function SendMoney() {
               >
                 <p className="text-xs font-semibold">{label}</p>
                 <p className="text-xs text-gray-500">{desc}</p>
-                {feeStats && (
+                {feeStats?.priorities && (
                   <p className="text-xs text-gray-500 mt-0.5">
                     {(feeStats.priorities[key] / 1e7).toFixed(5)} XLM
                   </p>
