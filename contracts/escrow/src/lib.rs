@@ -35,6 +35,13 @@ pub struct Upgraded {
     pub new_wasm_hash: BytesN<32>,
 }
 
+#[derive(Clone, Debug)]
+#[contracttype]
+pub struct FeesWithdrawn {
+    pub admin: Address,
+    pub amount: i128,
+}
+
 #[derive(Clone)]
 #[contracttype]
 pub struct Escrow {
@@ -389,6 +396,14 @@ impl EscrowContract {
         env.storage()
             .persistent()
             .set(&DataKey::AccumulatedFees, &(current_fees - amount));
+
+        env.events().publish(
+            (Symbol::new(&env, "FeesWithdrawn"),),
+            FeesWithdrawn {
+                admin: admin.clone(),
+                amount,
+            },
+        );
     }
 
     pub fn get_metadata(env: Env) -> (Address, Address) {

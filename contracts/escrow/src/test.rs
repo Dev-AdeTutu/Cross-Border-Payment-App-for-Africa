@@ -1,12 +1,12 @@
 #![cfg(test)]
 
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Events, Ledger},
     token::{Client as TokenClient, StellarAssetClient},
-    Address, BytesN, Env,
+    Address, BytesN, Env, IntoVal, Symbol, Val,
 };
 
-use crate::{EscrowContract, EscrowContractClient, EscrowStatus};
+use crate::{EscrowContract, EscrowContractClient, EscrowStatus, FeesWithdrawn};
 
 fn setup() -> (Env, EscrowContractClient<'static>, Address, Address) {
     let env = Env::default();
@@ -290,6 +290,37 @@ fn test_withdraw_fees() {
         TokenClient::new(&env, &usdc_id).balance(&admin),
         expected_fee
     );
+}
+
+#[test]
+fn test_withdraw_fees_emits_event() {
+    let (env, client, admin, usdc_id) = setup();
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let agent = Address::generate(&env);
+    let amount = 1_000_0000000i128;
+    let fee_bps = 500u32;
+
+    mint_usdc(&env, &usdc_id, &admin, &sender, amount);
+    let escrow_id = client.create_escrow(&sender, &recipient, &agent, &amount, &fee_bps);
+    client.release_escrow(&agent, &escrow_id);
+
+    let expected_fee = (amount * fee_bps as i128) / 10000;
+    client.withdraw_fees(&admin, &expected_fee);
+
+    let event_name: Val = Symbol::new(&env, "FeesWithdrawn").into_val(&env);
+    let events = env.events().all();
+    let fee_event = events.iter().find(|(_, topics, _)| {
+        topics.iter().any(|topic| topic == &event_name)
+    });
+
+    assert!(fee_event.is_some(), "FeesWithdrawn event not emitted");
+
+    let (_, _, data) = fee_event.unwrap();
+    let payload: FeesWithdrawn = soroban_sdk::from_val(&env, data);
+
+    assert_eq!(payload.admin, admin);
+    assert_eq!(payload.amount, expected_fee);
 }
 
 #[test]
