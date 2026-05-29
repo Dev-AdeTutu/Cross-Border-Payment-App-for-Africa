@@ -42,7 +42,7 @@ const LANGUAGES = [
 ];
 
 export default function Profile() {
-  const { user, logout } = useAuth();
+  const { user, logout, updateUser } = useAuth();
   const navigate = useNavigate();
   const { t, i18n } = useTranslation();
   const [copied, setCopied] = useState(false);
@@ -162,8 +162,7 @@ export default function Profile() {
       setTwoFAStep(null);
       setTwoFAData(null);
       setTwoFACode('');
-      // Update local user state
-      user.totp_enabled = true;
+      updateUser({ totp_enabled: true });
     } catch (err) {
       toast.error(err.response?.data?.error || 'Invalid code');
     } finally {
@@ -179,7 +178,7 @@ export default function Profile() {
       toast.success('2FA disabled');
       setTwoFAStep(null);
       setTwoFAPassword('');
-      user.totp_enabled = false;
+      updateUser({ totp_enabled: false });
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to disable 2FA');
     } finally {
