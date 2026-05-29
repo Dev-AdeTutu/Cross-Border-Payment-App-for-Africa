@@ -22,6 +22,7 @@ import {
   Shield,
   Key,
   AlertCircle,
+  Monitor,
   Link2,
   Calendar,
   Webhook,
@@ -1143,6 +1144,18 @@ export default function Profile() {
             {signersLoading ? 'Loading…' : signers === null ? 'Load' : 'Refresh'}
           </button>
         </div>
+
+        {/* Active sessions link (#466) */}
+        <Link
+          to="/sessions"
+          className="flex items-center justify-between bg-gray-800 hover:bg-gray-700 rounded-xl px-4 py-3 mb-4 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <Monitor size={15} className="text-gray-400" />
+            <span className="text-sm text-white">Active Sessions</span>
+          </div>
+          <span className="text-gray-500 text-lg">›</span>
+        </Link>
 
         {signersError && <p className="text-red-400 text-xs mb-3">{signersError}</p>}
 
