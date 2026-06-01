@@ -1,12 +1,13 @@
 const db = require('../db');
 const { getStellarStats } = require('../services/stellar');
+const { attestKyc, revokeKyc } = require('../services/kycAttestation');
+const audit = require('../services/audit');
 
 // Cache for Stellar stats (10 seconds)
 let stellarStatsCache = null;
 let stellarStatsCacheTime = 0;
 const CACHE_DURATION = 10000; // 10 seconds
 const { clawbackAsset } = require('../services/stellar');
-const audit = require('../services/audit');
 
 async function getStats(req, res, next) {
   try {
@@ -173,9 +174,6 @@ async function clawback(req, res, next) {
 
 module.exports = { getStats, getUsers, getTransactions, clawback };
 
-
-
-const { attestKyc, revokeKyc } = require('../services/kycAttestation');
 
 /**
  * POST /api/admin/kyc/:userId/approve
