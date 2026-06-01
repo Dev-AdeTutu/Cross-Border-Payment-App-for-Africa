@@ -3,11 +3,13 @@ const logger = require('./utils/logger');
 const { processScheduledPayments } = require('./jobs/scheduledPaymentsJob');
 const { indexContractEvents } = require('./jobs/contractEventIndexer');
 const { checkClaimableBalanceExpiry } = require('./jobs/checkClaimableBalanceExpiry');
+const { syncOfferEvents } = require('./jobs/syncOfferEvents');
 
 // Configurable cron expressions — fall back to sensible defaults
 const PAYMENTS_CRON   = process.env.CRON_SCHEDULED_PAYMENTS   || '* * * * *';   // every minute
 const INDEXER_CRON    = process.env.CRON_CONTRACT_INDEXER      || '*/2 * * * *'; // every 2 minutes
 const EXPIRY_CRON     = process.env.CRON_CLAIMABLE_EXPIRY      || '*/15 * * * *'; // every 15 minutes
+const OFFER_SYNC_CRON = process.env.CRON_OFFER_SYNC            || '*/2 * * * *'; // every 2 minutes
 
 // Wrap a job so overlapping runs are skipped and errors are always caught
 function safeJob(name, fn) {
@@ -37,6 +39,9 @@ function startScheduler() {
 
   cron.schedule(EXPIRY_CRON, safeJob('checkClaimableBalanceExpiry', checkClaimableBalanceExpiry));
   logger.info('Claimable balance expiry job registered', { cron: EXPIRY_CRON });
+
+  cron.schedule(OFFER_SYNC_CRON, safeJob('syncOfferEvents', syncOfferEvents));
+  logger.info('DEX offer event sync job registered', { cron: OFFER_SYNC_CRON });
 }
 
 module.exports = { startScheduler };
